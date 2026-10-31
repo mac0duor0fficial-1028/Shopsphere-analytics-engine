@@ -7,14 +7,71 @@ A **Modern Data Stack** pipeline that streams an e-commerce OLTP database into S
 > **"Real time" here means near-real-time.** Airbyte CDC is micro-batch (5-15 min cycles). Dynamic Tables remove
 > dbt's batch latency on the hottest metrics. Sub-minute latency needs Debezium + Kafka + Snowpipe Streaming (see roadmap).
 
-```
-Postgres ──WAL/pgoutput──► Airbyte ──► Snowflake RAW (CDC change log)
-                                          │
-                       dbt: STAGING → INTERMEDIATE → MARTS (+ SCD2 snapshots, contracts, tests)
-                                          │                         │
-                Dagster (schedule, freshness, alerts)      Dynamic Tables (opt-in)
-                                          │                         │
-                                  Streamlit dashboards ◄────────────┘
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryTextColor": "#0F172A", "lineColor": "#64748B", "fontSize": "15px"}, "flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 55}}}%%
+flowchart LR
+    subgraph SRC["1. SOURCE"]
+        PG[("<b>PostgreSQL</b><br/>OLTP · shop schema")]
+    end
+
+    subgraph ING["2. INGESTION"]
+        AB["<b>Airbyte</b><br/>CDC · Append mode"]
+    end
+
+    subgraph SNOW["3. SNOWFLAKE"]
+        RAW[("<b>RAW</b><br/>CDC change log")]
+
+        subgraph DBT["dbt transformation"]
+            STG["<b>STAGING</b><br/>dedupe by LSN"]
+            INT["<b>INTERMEDIATE</b><br/>business logic"]
+            MARTS[("<b>MARTS</b><br/>star schema · contracts · tests")]
+            SNAP["<b>SCD2 snapshots</b><br/>history"]
+        end
+
+        DT["<b>Dynamic Tables</b><br/>opt-in · 5 min lag"]
+    end
+
+    subgraph SERVE["4. SERVING"]
+        BI["<b>Streamlit dashboards</b>"]
+    end
+
+    ORCH{{"<b>Dagster</b><br/>schedules · freshness · alerts"}}
+
+    PG -- "WAL / pgoutput" --> AB
+    AB --> RAW
+    RAW --> STG --> INT --> MARTS
+    STG --> SNAP
+    STG --> DT
+    MARTS --> BI
+    DT --> BI
+
+    ORCH -. "triggers sync" .-> AB
+    ORCH -. "dbt build + tests" .-> DBT
+    ORCH -. "slot lag checks" .-> PG
+
+    classDef source fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0C4A6E
+    classDef ingest fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#78350F
+    classDef raw fill:#CFFAFE,stroke:#0891B2,stroke-width:2px,color:#164E63
+    classDef model fill:#EDE9FE,stroke:#7C3AED,stroke-width:2px,color:#3B0764
+    classDef mart fill:#DCFCE7,stroke:#16A34A,stroke-width:3px,color:#14532D
+    classDef rt fill:#FFE4E6,stroke:#E11D48,stroke-width:2px,stroke-dasharray:5 3,color:#881337
+    classDef serve fill:#FCE7F3,stroke:#DB2777,stroke-width:2px,color:#831843
+    classDef orch fill:#F1F5F9,stroke:#475569,stroke-width:2px,color:#0F172A
+
+    class PG source
+    class AB ingest
+    class RAW raw
+    class STG,INT,SNAP model
+    class MARTS mart
+    class DT rt
+    class BI serve
+    class ORCH orch
+
+    style SRC fill:#F0F9FF,stroke:#BAE6FD,stroke-width:1px,color:#075985
+    style ING fill:#FFFBEB,stroke:#FDE68A,stroke-width:1px,color:#92400E
+    style SNOW fill:#F8FAFF,stroke:#C7D2FE,stroke-width:1px,color:#3730A3
+    style DBT fill:#FAF5FF,stroke:#DDD6FE,stroke-width:1px,color:#5B21B6
+    style SERVE fill:#FDF2F8,stroke:#FBCFE8,stroke-width:1px,color:#9D174D
 ```
 
 ## Highlights
