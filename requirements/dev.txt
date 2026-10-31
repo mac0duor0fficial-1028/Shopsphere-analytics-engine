@@ -1,0 +1,11 @@
+-r dbt.txt
+sqlfluff>=3.2,<4
+yamllint>=1.35,<1.36
+black>=24.10,<25
+pytest>=8
+Faker==33.1.0
+psycopg[binary]>=3.2
+requests
+snowflake-connector-python>=3.12
+cryptography
+-e ./orchestration

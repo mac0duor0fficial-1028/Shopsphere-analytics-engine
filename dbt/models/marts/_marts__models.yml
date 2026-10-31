@@ -1,0 +1,180 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar dimension (UTC days).
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+        data_tests: [unique, not_null]
+
+  - name: dim_customers
+    description: Current customers (deleted customers excluded). `email` and `full_name` are PII and masked by tag-based masking policy for non-privileged roles.
+    config:
+      contract: {enforced: true}
+    columns:
+      - {name: customer_id, data_type: number, data_tests: [unique, not_null]}
+      - {name: email, data_type: varchar, data_tests: [not_null]}
+      - {name: full_name, data_type: varchar}
+      - {name: country, data_type: varchar}
+      - {name: created_at, data_type: timestamp_tz}
+      - {name: updated_at, data_type: timestamp_tz}
+
+  - name: dim_products
+    description: Current products with live stock level and stock status.
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: stock_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [in_stock, low_stock, out_of_stock]
+
+  - name: fct_orders
+    description: >
+      One row per order (incremental merge). Soft-deletes via is_deleted; always filter
+      `where not is_deleted` for analysis. Revenue = is_revenue_order (paid/shipped/delivered).
+    config:
+      contract: {enforced: true}
+    data_tests:
+      - dbt_expectations.expect_row_values_to_have_recent_data:
+          arguments:
+            datepart: hour
+            interval: 6
+            column_name: order_ts
+          config:
+            severity: warn
+    columns:
+      - {name: order_id, data_type: number, data_tests: [unique, not_null]}
+      - name: customer_id
+        data_type: number
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+              config:
+                severity: warn
+                where: "not is_deleted"
+      - name: status
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [pending, paid, shipped, delivered, cancelled, refunded]
+      - {name: channel, data_type: varchar}
+      - {name: currency, data_type: varchar}
+      - name: total_amount
+        data_type: number(12,2)
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1000000
+      - {name: line_count, data_type: number}
+      - {name: unit_count, data_type: number}
+      - {name: items_total, data_type: number(12, 2): null}
+      - {name: payment_method, data_type: varchar}
+      - {name: payment_status, data_type: varchar}
+      - {name: is_revenue_order, data_type: boolean}
+      - {name: is_cancelled, data_type: boolean}
+      - {name: is_refunded, data_type: boolean}
+      - {name: is_total_consistent, data_type: boolean}
+      - {name: is_deleted, data_type: boolean}
+      - {name: order_ts, data_type: timestamp_tz}
+      - {name: order_date, data_type: date}
+      - {name: updated_at, data_type: timestamp_tz}
+      - {name: order_last_extracted_at, data_type: timestamp_tz}
+
+  - name: fct_order_items
+    description: One row per order line (incremental merge) with order context.
+    columns:
+      - name: order_item_id
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+              config:
+                severity: warn
+                where: "not is_deleted"
+
+  - name: fct_payments
+    description: One row per payment attempt (incremental merge).
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+
+  - name: fct_inventory_daily
+    description: Closing stock per product per UTC day, carried forward when unchanged.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [date_day, product_id]
+
+  - name: mart_daily_revenue
+    description: Revenue, AOV, cancellation and refund rates by day, channel and currency.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_date, channel, currency]
+    columns:
+      - name: gross_revenue
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+  - name: mart_hourly_revenue
+    description: Revenue by UTC hour and channel.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_hour_utc, channel, currency]
+
+  - name: mart_customer_ltv
+    description: Lifetime value, recency and segment per customer. No PII.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: customer_segment
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [prospect, new, repeat, lapsed]
+
+  - name: mart_cohort_retention
+    description: Monthly cohort retention triangle.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [cohort_month, months_since_first_order]
+    columns:
+      - name: retention_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+  - name: mart_product_performance
+    description: Units, revenue, refunds and top/bottom-10 flags per product.
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+
+  - name: mart_funnel
+    description: Daily view -> cart -> checkout -> purchase funnel.
+    columns:
+      - name: session_date
+        data_tests: [unique, not_null]
+      - name: overall_conversion_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1

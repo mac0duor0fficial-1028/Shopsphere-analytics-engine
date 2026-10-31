@@ -1,0 +1,49 @@
+name: shopsphere
+version: "1.0.0"
+config-version: 2
+profile: shopsphere
+require-dbt-version: [">=1.9.0", "<2.0.0"]
+
+model-paths: ["models"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Statuses that count as recognised revenue. Refunded / cancelled orders are excluded.
+  revenue_statuses: ["paid", "shipped", "delivered"]
+  low_stock_threshold: 10
+  lapsed_after_days: 90
+  # Re-process window for incremental facts (late-arriving CDC rows are merged idempotently).
+  incremental_lookback_minutes: 30
+  # Dynamic Tables need change tracking on RAW tables first: `make enable-change-tracking`.
+  enable_realtime: false
+
+models:
+  shopsphere:
+    +on_schema_change: append_new_columns
+    +query_tag: dbt_shopsphere
+    staging:
+      +materialized: view
+      +schema: staging
+      +tags: ["staging", "hot"]
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+      +tags: ["intermediate", "hot"]
+    marts:
+      +materialized: table
+      +schema: marts
+      +tags: ["marts"]
+      realtime:
+        +tags: ["realtime"]
+
+seeds:
+  shopsphere:
+    +schema: seeds
+
+data_tests:
+  shopsphere:
+    +store_failures: false

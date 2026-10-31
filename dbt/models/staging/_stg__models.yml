@@ -1,0 +1,91 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: Latest state per customer, reconstructed from the CDC log. Contains PII.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: email
+        description: PII. Lower-cased and trimmed.
+      - name: is_deleted
+        description: True when the latest CDC event for the key is a DELETE.
+  - name: stg_products
+    description: Latest state per product.
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: sku
+        data_tests: [not_null]
+  - name: stg_orders
+    description: Latest state per order. Deleted orders are kept and flagged (is_deleted).
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [pending, paid, shipped, delivered, cancelled, refunded]
+      - name: channel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [web, mobile_app, marketplace, social]
+      - name: total_amount
+        data_tests:
+          - not_null
+  - name: stg_order_items
+    columns:
+      - name: order_item_id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests: [not_null]
+  - name: stg_payments
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+      - name: payment_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [pending, captured, failed, refunded]
+  - name: stg_inventory
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+  - name: stg_inventory_log
+    description: Full history of stock levels, one row per (product, changed_at).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [product_id, changed_at]
+  - name: stg_events
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [product_view, add_to_cart, begin_checkout, purchase]
+
+unit_tests:
+  - name: stg_orders_keeps_latest_cdc_record_and_flags_deletes
+    description: >
+      Order 1 changes pending -> paid (latest LSN wins). Order 2 is inserted then deleted
+      (delete record is latest and must surface as is_deleted).
+    model: stg_orders
+    given:
+      - input: source('shopsphere_raw', 'orders')
+        rows:
+          - {order_id: 1, customer_id: 10, status: pending, channel: web, total_amount: 20.00, currency: usd, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:00:00+00", _ab_cdc_lsn: 100, _ab_cdc_deleted_at: null, _airbyte_extracted_at: "2025-01-01 10:05:00+00"}
+          - {order_id: 1, customer_id: 10, status: paid, channel: web, total_amount: 20.00, currency: usd, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:01:00+00", _ab_cdc_lsn: 200, _ab_cdc_deleted_at: null, _airbyte_extracted_at: "2025-01-01 10:05:00+00"}
+          - {order_id: 2, customer_id: 11, status: cancelled, channel: mobile_app, total_amount: 5.00, currency: usd, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:02:00+00", _ab_cdc_lsn: 150, _ab_cdc_deleted_at: null, _airbyte_extracted_at: "2025-01-01 10:05:00+00"}
+          - {order_id: 2, customer_id: 11, status: cancelled, channel: mobile_app, total_amount: 5.00, currency: usd, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:02:00+00", _ab_cdc_lsn: 300, _ab_cdc_deleted_at: "2025-01-01 10:09:00+00", _airbyte_extracted_at: "2025-01-01 10:10:00+00"}
+    expect:
+      rows:
+        - {order_id: 1, customer_id: 10, status: paid, channel: web, total_amount: 20.00, currency: USD, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:01:00+00", is_deleted: false, deleted_at: null, record_changed_at: "2025-01-01 10:01:00+00", _extracted_at: "2025-01-01 10:05:00+00"}
+        - {order_id: 2, customer_id: 11, status: cancelled, channel: mobile_app, total_amount: 5.00, currency: USD, created_at: "2025-01-01 10:00:00+00", updated_at: "2025-01-01 10:02:00+00", is_deleted: true, deleted_at: "2025-01-01 10:09:00+00", record_changed_at: "2025-01-01 10:09:00+00", _extracted_at: "2025-01-01 10:10:00+00"}

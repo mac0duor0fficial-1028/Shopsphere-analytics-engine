@@ -1,0 +1,4 @@
+# uses dbt_utils.date_spine (package macro unknown to the jinja templater)
+dbt/models/marts/dim_date.sql
+dbt/dbt_packages/
+dbt/target/

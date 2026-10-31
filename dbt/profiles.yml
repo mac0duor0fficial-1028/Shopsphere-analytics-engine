@@ -1,0 +1,27 @@
+# Credentials come from the environment; nothing secret is stored here.
+shopsphere:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('DBT_SNOWFLAKE_USER') }}"
+      role: TRANSFORMER
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      database: SHOPSPHERE_ANALYTICS_DEV
+      warehouse: TRANSFORM_WH
+      schema: "dbt_{{ env_var('DBT_DEV_SCHEMA_SUFFIX', 'dev') }}"
+      threads: 8
+      client_session_keep_alive: false
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('DBT_SNOWFLAKE_USER') }}"
+      role: TRANSFORMER
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      database: SHOPSPHERE_ANALYTICS
+      warehouse: TRANSFORM_WH
+      schema: ANALYTICS
+      threads: 8

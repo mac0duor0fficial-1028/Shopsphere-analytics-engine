@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: shopsphere_raw
+    description: >
+      Airbyte Postgres CDC change log (Incremental | Append). Every row is a change event;
+      the same primary key appears many times. Never query these directly: use the stg_* models.
+    database: SHOPSPHERE_RAW
+    schema: AIRBYTE
+    loaded_at_field: _airbyte_extracted_at
+    tables:
+      # High-traffic tables: stale data is a pipeline incident.
+      - name: orders
+        freshness: &hot_freshness
+          warn_after: {count: 20, period: minute}
+          error_after: {count: 60, period: minute}
+      - name: order_items
+        freshness: *hot_freshness
+      - name: payments
+        freshness: *hot_freshness
+      - name: events
+        freshness: *hot_freshness
+      # Low-churn master data: only warn, quiet periods are normal.
+      - name: customers
+        freshness:
+          warn_after: {count: 24, period: hour}
+      - name: products
+        freshness:
+          warn_after: {count: 24, period: hour}
+      - name: inventory
+        freshness:
+          warn_after: {count: 6, period: hour}

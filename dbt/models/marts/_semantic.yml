@@ -1,0 +1,58 @@
+version: 2
+
+# Single definition of the headline metrics (dbt Semantic Layer / MetricFlow).
+semantic_models:
+  - name: orders
+    description: Order grain facts.
+    model: ref('fct_orders')
+    defaults:
+      agg_time_dimension: order_date
+    entities:
+      - name: order
+        type: primary
+        expr: order_id
+      - name: customer
+        type: foreign
+        expr: customer_id
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: channel
+        type: categorical
+      - name: status
+        type: categorical
+    measures:
+      - name: orders_placed_measure
+        expr: "iff(is_deleted, 0, 1)"
+        agg: sum
+      - name: revenue_orders_measure
+        expr: "iff(is_revenue_order and not is_deleted, 1, 0)"
+        agg: sum
+      - name: gross_revenue_measure
+        expr: "iff(is_revenue_order and not is_deleted, total_amount, 0)"
+        agg: sum
+
+metrics:
+  - name: orders_placed
+    label: Orders placed
+    type: simple
+    type_params:
+      measure: orders_placed_measure
+  - name: revenue_orders
+    label: Revenue orders
+    type: simple
+    type_params:
+      measure: revenue_orders_measure
+  - name: gross_revenue
+    label: Gross revenue
+    type: simple
+    type_params:
+      measure: gross_revenue_measure
+  - name: average_order_value
+    label: Average order value
+    type: ratio
+    type_params:
+      numerator: gross_revenue
+      denominator: revenue_orders

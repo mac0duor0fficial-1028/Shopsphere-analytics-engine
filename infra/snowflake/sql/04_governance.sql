@@ -1,0 +1,21 @@
+-- 04: PII masking via tag-based masking policies (requires Snowflake Enterprise edition or higher).
+-- Columns carrying the PII tag are masked for every role except TRANSFORMER, ACCOUNTADMIN and
+-- members of PII_READER. dbt applies the tag after each build (see macro apply_pii_tags).
+USE ROLE ACCOUNTADMIN;
+GRANT APPLY MASKING POLICY ON ACCOUNT TO ROLE TRANSFORMER;
+
+USE ROLE TRANSFORMER;
+CREATE TAG IF NOT EXISTS SHOPSPHERE_ANALYTICS.GOVERNANCE.PII
+    ALLOWED_VALUES 'email', 'name'
+    COMMENT = 'Personally identifiable information; masked by MASK_PII_STRING';
+
+CREATE MASKING POLICY IF NOT EXISTS SHOPSPHERE_ANALYTICS.GOVERNANCE.MASK_PII_STRING
+    AS (val STRING) RETURNS STRING ->
+    CASE
+        WHEN val IS NULL THEN NULL
+        WHEN CURRENT_ROLE() IN ('TRANSFORMER', 'ACCOUNTADMIN') THEN val
+        WHEN IS_ROLE_IN_SESSION('PII_READER') THEN val
+        ELSE '***MASKED***'
+    END;
+
+ALTER TAG SHOPSPHERE_ANALYTICS.GOVERNANCE.PII SET MASKING POLICY SHOPSPHERE_ANALYTICS.GOVERNANCE.MASK_PII_STRING;

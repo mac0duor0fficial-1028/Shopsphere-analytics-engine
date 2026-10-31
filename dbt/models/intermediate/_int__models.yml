@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: int_orders_enriched
+    description: One row per order with item/payment rollups and business flags (revenue, cancelled, refunded).
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+              config:
+                severity: warn   # a customer row can legitimately lag the order by one sync
+  - name: int_customer_order_history
+    description: Revenue orders per customer in chronological sequence.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+  - name: int_order_funnel
+    description: One row per session with first timestamp reached at each funnel stage.
+    columns:
+      - name: session_id
+        data_tests: [unique, not_null]

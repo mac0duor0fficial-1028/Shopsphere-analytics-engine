@@ -1,0 +1,27 @@
+# secrets
+.env
+*.p8
+*.pem
+*.key
+secrets/
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+# dagster
+orchestration/.dagster_home/
+orchestration/tmp*/
+.dagster/
+# os / ide
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/

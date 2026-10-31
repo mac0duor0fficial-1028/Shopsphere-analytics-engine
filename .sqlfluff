@@ -1,0 +1,28 @@
+[sqlfluff]
+dialect = snowflake
+templater = jinja
+max_line_length = 120
+exclude_rules = LT05, LT09, ST06, AM04, AM06, RF02, RF04, ST05, CP02, AL09
+runaway_limit = 20
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = dbt/macros
+
+[sqlfluff:templater:jinja:context]
+target = {"name": "prod", "warehouse": "TRANSFORM_WH", "database": "SHOPSPHERE_ANALYTICS", "schema": "dbt"}
+
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:aliasing.table]
+aliasing = explicit

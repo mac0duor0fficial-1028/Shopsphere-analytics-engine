@@ -1,0 +1,15 @@
+selectors:
+  - name: hot_path          # run every ~15 min after an Airbyte sync
+    definition:
+      method: tag
+      value: hot
+  - name: daily_full
+    default: false
+    definition:
+      union:
+        - method: tag
+          value: hot
+        - method: tag
+          value: marts
+        - method: resource_type
+          value: snapshot

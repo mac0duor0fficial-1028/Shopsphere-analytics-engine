@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: rt_revenue_by_minute
+    description: Dynamic Table (5 min target lag) of revenue per minute. Requires enable_realtime=true.
+  - name: rt_inventory_current
+    description: Dynamic Table of current stock per product. Requires enable_realtime=true.

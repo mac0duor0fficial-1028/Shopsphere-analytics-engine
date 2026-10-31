@@ -1,0 +1,49 @@
+# Local source system. Airbyte itself is installed separately with `abctl local install`.
+services:
+  postgres:
+    image: postgres:16
+    container_name: shopsphere-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-shopsphere}
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+      # Safety net: an abandoned slot can never fill the disk (slot becomes 'lost' instead).
+      - -c
+      - max_slot_wal_keep_size=4GB
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./source_db/ddl/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  generator:
+    build: ./source_db/generator
+    container_name: shopsphere-generator
+    profiles: ["generator"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_DSN: host=postgres port=5432 dbname=${POSTGRES_DB:-shopsphere} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}
+      SESSIONS_PER_SEC: ${SESSIONS_PER_SEC:-5}
+      SEED_CUSTOMERS: ${SEED_CUSTOMERS:-500}
+      SEED_PRODUCTS: ${SEED_PRODUCTS:-120}
+      RUN_SECONDS: ${RUN_SECONDS:-0}
+      LIFECYCLE_DELAY_SECONDS: ${LIFECYCLE_DELAY_SECONDS:-20}
+
+volumes:
+  pgdata:

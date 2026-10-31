@@ -1,0 +1,34 @@
+version: 2
+
+# SCD2 history for slowly changing entities. record_changed_at = updated_at, or the CDC delete
+# timestamp for deleted rows, so deletions also close out the current version.
+snapshots:
+  - name: snap_customers
+    relation: ref('stg_customers')
+    config:
+      schema: snapshots
+      unique_key: customer_id
+      strategy: timestamp
+      updated_at: record_changed_at
+      hard_deletes: invalidate
+      tags: ["snapshots"]
+      post_hook:
+        - "{{ apply_pii_tags({'email': 'email', 'full_name': 'name'}) }}"
+  - name: snap_products
+    relation: ref('stg_products')
+    config:
+      schema: snapshots
+      unique_key: product_id
+      strategy: timestamp
+      updated_at: record_changed_at
+      hard_deletes: invalidate
+      tags: ["snapshots"]
+  - name: snap_orders
+    relation: ref('stg_orders')
+    config:
+      schema: snapshots
+      unique_key: order_id
+      strategy: timestamp
+      updated_at: record_changed_at
+      hard_deletes: invalidate
+      tags: ["snapshots"]
