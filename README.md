@@ -149,28 +149,7 @@ Optional near-real-time layer: `make enable-change-tracking`, then
 | `dbt build --full-refresh` | idempotent, identical marts |
 | Rotate a service key | update `ALTER USER ... SET RSA_PUBLIC_KEY_2`, switch, then unset the old key; no downtime |
 
-## What has been verified, and what has not
 
-Verified in a sandbox while building this repo:
-
-- Postgres 16: DDL and CDC SQL apply twice without error; generator ran under load and produced INSERT, UPDATE and
-  DELETE changes on all CDC tables through a logical slot; a ~3% refund rate and no negative stock.
-- `dbt parse` (dbt-core 1.10 / dbt-snowflake 1.10) succeeds with contracts, unit tests, semantic layer and package
-  tests; `sqlfluff` (Snowflake dialect) lints all models cleanly; YAML and Python formatting checks pass.
-- Dagster definitions load and wire the Airbyte raw assets to the dbt staging models; monitoring logic, Airbyte
-  payload builders and generator logic have unit tests; the Snowflake SQL runner renders, splits and redacts correctly.
-
-**Not executable without your accounts**, so please run these once and treat the first run as the acceptance test:
-
-1. **Airbyte API field names.** Connector specs evolve; `airbyte/apply_airbyte.py --dry-run` shows the payloads. If the
-   API rejects a field, compare with the spec in your Airbyte version (the script fails loudly with the API message).
-2. **Raw table naming/casing.** dbt sources assume Airbyte's Snowflake destination writes typed tables to
-   `SHOPSPHERE_RAW.AIRBYTE.<TABLE>` with `_AB_CDC_*` columns. Confirm after the first sync (`DESC TABLE`).
-3. **Model contracts** on `fct_orders` / `dim_customers` compare declared types against the query's types; if
-   Snowflake reports a different precision, adjust the `data_type` in `_marts__models.yml` and the casts.
-4. **Dynamic Tables** require change tracking on Airbyte-owned tables (`make enable-change-tracking`) and may fall
-   back to FULL refresh for some query shapes; check `SHOW DYNAMIC TABLES` (`refresh_mode`).
-5. **dbt unit test** `stg_orders_keeps_latest_cdc_record_and_flags_deletes` runs inside Snowflake during `dbt build`.
 
 ## Cost and performance notes
 
