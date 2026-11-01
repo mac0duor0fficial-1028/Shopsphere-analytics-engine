@@ -86,7 +86,7 @@ flowchart LR
 - **Reproducible demo:** a traffic generator exercises INSERT / UPDATE / DELETE so CDC is genuinely tested.
 
 ## Repository layout
-```
+```text
 shopsphere-analytics-engine/
 ├── Makefile                          Every operation is a make target
 ├── docker-compose.yml                Local Postgres (logical replication) + traffic generator
@@ -145,6 +145,45 @@ shopsphere-analytics-engine/
     ├── architecture.md
     ├── runbooks/                     slot lag · failed sync · schema drift · full re-sync
     └── adr/                          Architecture decision records
+```
+### dbt model lineage
+ 
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryTextColor": "#0F172A", "lineColor": "#64748B", "fontSize": "14px"}}}%%
+flowchart LR
+    subgraph RAWL["RAW"]
+        R[("7 Airbyte tables<br/>customers · products · orders<br/>order_items · payments<br/>inventory · events")]
+    end
+    subgraph STGL["STAGING"]
+        ST["stg_customers · stg_products<br/>stg_orders · stg_order_items<br/>stg_payments · stg_inventory<br/>stg_inventory_log · stg_events"]
+    end
+    subgraph INTL["INTERMEDIATE"]
+        IN["int_orders_enriched<br/>int_customer_order_history<br/>int_order_funnel"]
+    end
+    subgraph MARTL["MARTS"]
+        DIM["dim_customers · dim_products<br/>dim_date"]
+        FCT["fct_orders · fct_order_items<br/>fct_payments · fct_inventory_daily"]
+        MRT["mart_daily_revenue · mart_hourly_revenue<br/>mart_customer_ltv · mart_cohort_retention<br/>mart_product_performance · mart_funnel"]
+    end
+    SN["snap_customers<br/>snap_products · snap_orders"]
+    RT["rt_revenue_by_minute<br/>rt_inventory_current"]
+ 
+    R --> ST --> IN
+    IN --> FCT
+    ST --> DIM
+    DIM --> MRT
+    FCT --> MRT
+    ST --> SN
+    ST -.-> RT
+ 
+    classDef a fill:#CFFAFE,stroke:#0891B2,color:#164E63
+    classDef b fill:#EDE9FE,stroke:#7C3AED,color:#3B0764
+    classDef c fill:#DCFCE7,stroke:#16A34A,color:#14532D
+    classDef d fill:#FFE4E6,stroke:#E11D48,stroke-dasharray:5 3,color:#881337
+    class R a
+    class ST,IN,SN b
+    class DIM,FCT,MRT c
+    class RT d
 ```
 
 > **Implementing it?** Follow the gated, step-by-step [Implementation Runbook](docs/IMPLEMENTATION_RUNBOOK.md).
