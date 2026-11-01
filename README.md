@@ -188,69 +188,149 @@ flowchart LR
 
 > **Implementing it?** Follow the gated, step-by-step [Implementation Runbook](docs/IMPLEMENTATION_RUNBOOK.md).
 
-## Quickstart (local source + your Snowflake account)
-
-Prerequisites: Docker, Python 3.10+, OpenSSL, a Snowflake account (**Enterprise edition** for tag-based masking;
-Standard works if you skip `04_governance.sql` and the PII post-hooks), and Airbyte via
-[`abctl local install`](https://docs.airbyte.com/platform/using-airbyte/getting-started/oss-quickstart).
-
-```bash
-cp .env.example .env                       # fill in values
-pip install -r requirements/dev.txt
-
-# 1. Source database with logical replication, then CDC role/publication/slot
-make up && make cdc-setup
-
-# 2. Snowflake: keys -> bootstrap
-./scripts/gen_keys.sh                      # paste the printed *_RSA_PUBLIC_KEY lines into .env
-make snowflake-bootstrap
-
-# 3. Airbyte: create credentials in the UI (abctl local credentials), set AIRBYTE_* in .env, then
-make airbyte-plan                          # review (secrets redacted)
-make airbyte-apply                         # prints AIRBYTE_CONNECTION_ID -> add to .env
-
-# 4. Seed data, first sync, build models
-make seed
-#    run one sync (Airbyte UI or Dagster), then:
-make dbt-deps && make dbt-build
-
-# 5. Orchestrate and visualise
-make dagster-dev                           # http://localhost:3000 (enable the schedules)
-make generate &                            # continuous traffic
-make bi                                    # Streamlit
-```
-
-Before any production build, run the single local quality gate: `make check` (lint, `dbt parse`, unit tests).
-There is no CI service to maintain; deploys are `make dbt-build DBT_TARGET=prod`.
-
-Optional near-real-time layer: `make enable-change-tracking`, then
-`dbt build --vars '{enable_realtime: true}' --select tag:realtime`.
-
-## Validate end to end
-
-| Test | Expected |
+## Prerequisites
+ 
+| Requirement | Notes |
 |---|---|
-| Insert / update / delete a row in Postgres, run a sync | row appears, changes, or is flagged `is_deleted` in `fct_orders` |
-| `ALTER TABLE shop.orders ADD COLUMN note text` | propagates to RAW; models keep working; follow the schema-drift runbook for marts |
-| Stop Airbyte for an hour, resume | catches up, no gaps or duplicates in marts (dedupe by LSN) |
-| `SESSIONS_PER_SEC=60`, scale generator containers | freshness holds; `cdc_health_job` shows bounded retained WAL |
-| `dbt build --full-refresh` | idempotent, identical marts |
-| Rotate a service key | update `ALTER USER ... SET RSA_PUBLIC_KEY_2`, switch, then unset the old key; no downtime |
-
-
-
-## Cost and performance notes
-
-- Warehouses auto-suspend at 60s; Airbyte on `XSMALL`, dbt on `SMALL`; a resource monitor suspends at 90% of the quota.
-- Staging views re-scan the CDC log each build. That is fine at portfolio scale; at production scale convert hot
-  staging models to incremental and apply retention to `RAW` (change log) tables.
-- Airbyte/Dagster cadence is the main cost lever: every sync wakes `LOADING_WH` and `TRANSFORM_WH`.
-
+| Docker with Compose v2 | Runs the source Postgres and the traffic generator |
+| Python 3.10 to 3.12 | For dbt, Dagster, scripts, Streamlit |
+| OpenSSL | Generates service-user key pairs |
+| Snowflake account with `ACCOUNTADMIN` | **Enterprise edition** for tag-based PII masking. On Standard, skip `04_governance.sql` and the PII post-hooks (see the runbook, step C5) |
+| Airbyte | Self-hosted via [`abctl local install`](https://docs.airbyte.com/platform/using-airbyte/getting-started/oss-quickstart) or Airbyte Cloud |
+ 
+## Configure
+ 
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements/dev.txt -r requirements/bi.txt
+cp .env.example .env
+```
+ 
+Edit `.env`. Three rules prevent most first-run failures:
+ 
+1. **No quotes and no spaces** in values.
+2. **Key paths must be absolute** (dbt and Dagster run from subfolders).
+3. Use your Snowflake `orgname-accountname` as `SNOWFLAKE_ACCOUNT`.
+Fill the Postgres, Snowflake and credential values now. The `AIRBYTE_*` IDs and public keys are filled in during steps 4 and 6.
+ 
+## Execute the pipeline
+ 
+Run the steps in order. Each has a result you should see before moving on. Full detail and troubleshooting are in the
+[Implementation Runbook](docs/IMPLEMENTATION_RUNBOOK.md).
+ 
+| Step | Command | What it does | You should see |
+|---|---|---|---|
+| 1 | `make up` | Starts Postgres 16 with logical replication and creates the `shop` schema | Container healthy |
+| 2 | `make cdc-setup` | Creates `airbyte_cdc` role, publication `shopsphere_pub`, slot `airbyte_slot` | One row in `pg_replication_slots` |
+| 3 | `make seed` | Runs the traffic generator for 30 s (customers, products, orders, events) | Orders, payments and events in Postgres |
+| 4 | `./scripts/gen_keys.sh` | Generates key pairs for `SVC_AIRBYTE`, `SVC_DBT`, `SVC_BI` | Three `*_RSA_PUBLIC_KEY=` lines to paste into `.env` |
+| 5 | `make snowflake-bootstrap` | Creates roles, databases, 3 warehouses, resource monitor, service users, masking | Every statement prints `ok` |
+| 6 | `make airbyte-plan` then `make airbyte-apply` | Previews, then creates the Postgres CDC source, Snowflake destination and 7-stream connection | `AIRBYTE_CONNECTION_ID=...` to add to `.env` |
+| 7 | Sync once (Airbyte UI **Sync now**, or Dagster in step 9) | Initial snapshot, then WAL streaming into `SHOPSPHERE_RAW.AIRBYTE` | Job succeeded; tables populated |
+| 8 | `make dbt-deps` then `make dbt-build` | Builds staging, intermediate, marts, snapshots; runs all tests (dev target) | `dbt build` finishes with 0 errors |
+| 9 | `make dagster-dev` | Starts Dagster at http://localhost:3000. Run `hot_pipeline_job`, then enable the schedules | Job green; assets linked raw to marts |
+| 10 | `make generate` and `make bi` | Continuous traffic, and Streamlit at http://localhost:8501 | Dashboards update as data flows |
+ 
+Promote to production once dev is green:
+ 
+```bash
+make dbt-build DBT_TARGET=prod
+```
+ 
+**Optional near-real-time layer** (after the first sync):
+ 
+```bash
+make enable-change-tracking
+cd dbt && dbt build --vars '{enable_realtime: true}' --select tag:realtime
+```
+ 
+## Run it day to day
+ 
+Once Dagster is running, the pipeline runs itself.
+ 
+| Job | Schedule (UTC) | Does |
+|---|---|---|
+| `hot_pipeline_job` | every 15 min | Airbyte sync, source freshness check, `dbt build` of the hot models |
+| `daily_full_job` | 03:00 | Everything: all marts, snapshots, full test suite |
+| `cdc_health_job` | every 5 min | Fails if the replication slot retains too much WAL or is invalidated |
+| `reconciliation_job` | 04:30 | Compares Postgres and Snowflake row counts and amounts |
+ 
+Failures post to Slack when `SLACK_WEBHOOK_URL` is set.
+ 
+**Run things manually**
+ 
+```bash
+make dbt-source-freshness                # are the raw tables fresh?
+make dbt-build                           # full build (dev target)
+cd dbt && dbt build --selector hot_path  # only the hot models
+make dbt-docs                            # generate lineage docs
+make generate                            # keep producing source traffic
+```
+ 
+## Verify the results
+ 
+```sql
+-- Raw layer: change log with CDC columns populated
+SELECT COUNT(*) AS rows, COUNT(_AB_CDC_LSN) AS with_lsn FROM SHOPSPHERE_RAW.AIRBYTE.ORDERS;
+ 
+-- Marts match the source (within in-flight data of the last ~45 minutes)
+SELECT COUNT(*) FROM SHOPSPHERE_ANALYTICS.MARTS.FCT_ORDERS WHERE NOT IS_DELETED;
+ 
+-- Headline numbers
+SELECT * FROM SHOPSPHERE_ANALYTICS.MARTS.MART_DAILY_REVENUE ORDER BY ORDER_DATE DESC LIMIT 7;
+ 
+-- PII masking works: REPORTER sees ***MASKED***, TRANSFORMER sees real values
+USE ROLE REPORTER;
+SELECT EMAIL FROM SHOPSPHERE_ANALYTICS.MARTS.DIM_CUSTOMERS LIMIT 1;
+```
+ 
+Prove CDC end to end: insert, update, then delete an order in Postgres, run a sync and a build after each, and watch the
+row appear, change, then flip to `is_deleted = true` in `fct_orders`. The raw table keeps every version.
+ 
+| Scenario | Expected |
+|---|---|
+| Insert / update / delete in Postgres | Appears, changes, or is flagged `is_deleted` after one sync and one build |
+| `ALTER TABLE shop.orders ADD COLUMN note text` | Column propagates to RAW; models keep working (see the schema-drift runbook) |
+| Pause the pipeline for an hour, then resume | Catches up with no gaps or duplicates |
+| `dbt build --full-refresh` | Identical marts (idempotent) |
+| Rotate a service key | Set `RSA_PUBLIC_KEY_2`, switch, unset the old key; no downtime |
+ 
+## Monitoring and runbooks
+ 
+| Situation | Runbook |
+|---|---|
+| WAL growing or slot unhealthy | [docs/runbooks/replication-slot-lag.md](docs/runbooks/replication-slot-lag.md) |
+| Airbyte sync failed or stuck | [docs/runbooks/failed-sync.md](docs/runbooks/failed-sync.md) |
+| Source schema changed | [docs/runbooks/schema-drift.md](docs/runbooks/schema-drift.md) |
+| Rebuild after slot loss or corruption | [docs/runbooks/full-resync-backfill.md](docs/runbooks/full-resync-backfill.md) |
+ 
+Note: `active = false` on the replication slot is normal between Airbyte micro-batches. The alert is on retained WAL, not inactivity.
+ 
+## Quality gate
+ 
+Run one command before every production build:
+ 
+```bash
+make check      # dbt deps, black, yamllint, sqlfluff, dbt parse, unit tests
+```
+ 
+Deploys are `make dbt-build DBT_TARGET=prod`. There is no CI service to maintain.
+ 
+## First-run checklist
+ 
+Your first run is the acceptance test. These items depend on your accounts and connector versions, so confirm them once:
+ 
+1. **Airbyte API fields.** `make airbyte-plan` shows the payloads. If the API rejects a field, compare it with the connector spec in your Airbyte version; the script prints the API's message.
+2. **Raw table names and casing.** dbt sources expect typed tables at `SHOPSPHERE_RAW.AIRBYTE.<TABLE>` with `_AB_CDC_*` columns. Confirm with `DESC TABLE` after the first sync; adjust `dbt/models/staging/_stg__sources.yml` if they differ.
+3. **Model contracts** on `fct_orders` and `dim_customers`. If Snowflake reports a different precision, adjust `data_type` in `_marts__models.yml` and the matching casts.
+4. **Dynamic Tables** need change tracking on the Airbyte-owned tables (`make enable-change-tracking`). Check `SHOW DYNAMIC TABLES` for `refresh_mode`; some queries fall back to full refresh.
+5. **dbt unit test** `stg_orders_keeps_latest_cdc_record_and_flags_deletes` runs inside Snowflake during `dbt build`.
+## Cost and performance
+ 
+- Warehouses auto-suspend at 60 s. Airbyte uses `XSMALL`, dbt uses `SMALL`. The resource monitor suspends at 90% of the credit quota.
+- Staging views re-scan the CDC log on each build. That is fine at portfolio scale; at production scale make hot staging models incremental and apply retention to the RAW change log.
+- Sync cadence is the main cost lever: every sync wakes `LOADING_WH` and `TRANSFORM_WH`.
 ## Roadmap
-
+ 
 Debezium + Kafka + Snowpipe Streaming for sub-minute latency; Terraform port (ADR 002); GDPR erasure workflow that
 purges RAW and facts; reverse ETL; ML features (churn, recommendations).
-
-## License
-
-MIT
