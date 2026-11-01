@@ -86,16 +86,65 @@ flowchart LR
 - **Reproducible demo:** a traffic generator exercises INSERT / UPDATE / DELETE so CDC is genuinely tested.
 
 ## Repository layout
-
 ```
-Makefile          every operation is a `make` target; `make check` is the local quality gate
-source_db/        DDL, CDC setup SQL, traffic generator (+ tests)
-infra/snowflake/  idempotent bootstrap SQL: warehouses, roles, grants, users, masking
-airbyte/          apply_airbyte.py (source + destination + connection via API)
-dbt/              staging / intermediate / marts / snapshots / tests / semantic layer
-orchestration/    Dagster code location (assets, schedules, monitoring)
-bi/               Streamlit dashboards
-docs/             architecture, runbooks, ADRs
+shopsphere-analytics-engine/
+├── Makefile                          Every operation is a make target
+├── docker-compose.yml                Local Postgres (logical replication) + traffic generator
+├── .env.example                      All configuration variables (copy to .env)
+├── requirements/                     dbt.txt · dev.txt · bi.txt
+│
+├── source_db/                        STAGE 1: source system
+│   ├── ddl/
+│   │   ├── 01_schema.sql             OLTP tables, triggers, indexes
+│   │   └── 02_cdc.sql                CDC role, REPLICA IDENTITY, publication, slot
+│   └── generator/                    Faker traffic: inserts, updates, deletes, funnel events
+│       ├── generator.py
+│       ├── Dockerfile
+│       └── tests/
+│
+├── infra/snowflake/sql/              STAGE 2: Snowflake foundation (idempotent)
+│   ├── 01_account_objects.sql        Roles, databases, warehouses, resource monitor
+│   ├── 02_grants.sql                 Least-privilege grants, schema layout
+│   ├── 03_service_users.sql          Key-pair service users
+│   ├── 04_governance.sql             PII tag + masking policy
+│   └── 90_enable_change_tracking.sql Needed for Dynamic Tables
+│
+├── airbyte/                          STAGE 3: ingestion
+│   ├── apply_airbyte.py              Creates source, destination, connection via API
+│   └── tests/
+│
+├── dbt/                              STAGE 4: transformation
+│   ├── dbt_project.yml · profiles.yml · packages.yml · selectors.yml
+│   ├── macros/                       cdc_latest (dedupe by LSN), schema naming, PII tagging
+│   ├── models/
+│   │   ├── staging/                  stg_* : latest row per key, delete flags
+│   │   ├── intermediate/             orders enriched, customer history, session funnel
+│   │   └── marts/
+│   │       ├── dim_*  fct_*          Star schema (contracts on fct_orders, dim_customers)
+│   │       ├── mart_*                Revenue, LTV, cohorts, products, funnel
+│   │       ├── _semantic.yml         Governed metrics (MetricFlow)
+│   │       └── realtime/             Dynamic Tables (opt-in)
+│   ├── snapshots/                    SCD2 history: customers, products, orders
+│   └── tests/                        Business-rule tests
+│
+├── orchestration/                    STAGE 5: orchestration + monitoring
+│   └── shopsphere_orchestration/
+│       ├── assets.py                 Airbyte sync asset + dbt assets
+│       ├── resources.py              Airbyte, Postgres, Snowflake resources
+│       ├── monitoring.py             Slot-lag check, Postgres vs Snowflake reconciliation
+│       └── definitions.py            Jobs, schedules, Slack failure sensor
+│
+├── bi/streamlit_app/app.py           STAGE 6: dashboards (read-only REPORTER role)
+│
+├── scripts/
+│   ├── gen_keys.sh                   Generate key pairs for service users
+│   └── snowflake_sql.py              Runs the bootstrap SQL with ${ENV} substitution
+│
+└── docs/
+    ├── IMPLEMENTATION_RUNBOOK.md     Gated, step-by-step build guide
+    ├── architecture.md
+    ├── runbooks/                     slot lag · failed sync · schema drift · full re-sync
+    └── adr/                          Architecture decision records
 ```
 
 > **Implementing it?** Follow the gated, step-by-step [Implementation Runbook](docs/IMPLEMENTATION_RUNBOOK.md).
